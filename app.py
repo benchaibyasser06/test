@@ -468,7 +468,7 @@ if "Chef" in active_view:
                     st.markdown(f'<div dir="auto">{answer}</div>', unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------
-# VIEW 2: SENSAI (Medical Focus & Anki / QCM Generator)
+# VIEW 2: SENSAI (Medical Focus & Anki / Interactive QCM Generator)
 # ------------------------------------------------------------------------------
 elif "Sensai" in active_view:
     st.markdown(
@@ -532,44 +532,113 @@ elif "Sensai" in active_view:
             key="download_anki_csv_btn",
         )
 
-    if not st.session_state.pdf_text:
-        st.info("💡 Sensai جاهز للأسئلة الطبية، مراجعة QCM، أو تحليل ملفات PDF للدروس والتحاليل.")
+    # --------------------------------------------------------------------------
+    # التعديل الجذري هنا: إذا كان وضع الـ QCM مفعلاً، نعرض واجهة الأسئلة التفاعلية والاختيارات
+    # --------------------------------------------------------------------------
+    if st.session_state.get("sensai_quiz_mode", False):
+        st.markdown("---")
+        st.subheader("🩺 وضع الحالات السريرية واختبارات الـ QCM التفاعلية")
 
-    sensai_container = st.container(height=420)
-    with sensai_container:
-        db_sensai_msgs = load_messages_from_db("sensai")
-        for msg in db_sensai_msgs:
-            with st.chat_message(msg["role"]):
-                st.markdown(f'<div dir="auto">{msg["content"]}</div>', unsafe_allow_html=True)
+        # تهيئة الـ Score في session_state إذا لم تقم بذلك مسبقاً
+        if "qcm_score" not in st.session_state:
+            st.session_state.qcm_score = 0
+        if "qcm_total" not in st.session_state:
+            st.session_state.qcm_total = 0
+        if "current_qcm" not in st.session_state:
+            st.session_state.current_qcm = None
 
-    if sensai_input := st.chat_input(
-        "سقسي سينساي على الأعراض، التحاليل الطبية ولا الوثائق المرفوقة...",
-        key="sensai_input_key",
-    ):
-        save_message_to_db("sensai", "user", sensai_input)
+        st.sidebar.metric(label="Score QCM", value=f"{st.session_state.qcm_score} / {st.session_state.qcm_total}")
+
+        if st.button("🎲 توليد حالة سريرية / QCM جديد"):
+            with st.spinner("Sensai يجهز لك سؤال QCM محترم..."):
+                prompt_qcm = """
+                Génère un cas clinique médical de niveau 3ème année médecine (Pneumologie, Cardiologie ou Anatomo-pathologie).
+                Réponds EXCLUSIVEMENT au format JSON valide sans aucun texte ni markdown autour (pas de ```json):
+                {
+                    "vignette": "وصف دقيق للحالة السريرية للمريض...",
+                    "question": "السؤال المطروح بالفرنسية أو العربية الطبية...",
+                    "options": {
+                        "A": "الخيار الأول",
+                        "B": "الخيار الثاني",
+                        "C": "الخيار الثالث",
+                        "D": "الخيار الرابع"
+                    },
+                    "correct_option": "A",
+                    "explanation": "شرح طبي مفصل وفيزيولوجيا مرضية مع لمسة ساخرة بأسلوب Sensai بالدارجة الجزائرية."
+                }
+                """
+                try:
+                    response_text = send_message_with_rotation("sensai", prompt_qcm)
+                    # تنظيف النص لضمان توافق الـ JSON
+                    clean_res = response_text.replace("```json", "").replace("```", "").strip()
+                    st.session_state.current_qcm = json.loads(clean_res)
+                    st.rerun()
+                except Exception as qcm_err:
+                    st.error(f"خطأ في توليد الـ QCM، حاول مجدداً: {qcm_err}")
+
+        # عرض السؤال الحالي وتفاعل الخيارات
+        if st.session_state.current_qcm:
+            qcm = st.session_state.current_qcm
+            st.info(f"**Vignette:**\n\n{qcm['vignette']}")
+            st.write(f"**Question :** {qcm['question']}")
+
+            user_choice = st.radio(
+                "اختر الإجابة الصحيحة:",
+                options=list(qcm["options"].keys()),
+                format_func=lambda x: f"{x}) {qcm['options'][x]}",
+                key="qcm_radio_choice"
+            )
+
+            if st.button("Valider la réponse", key="validate_qcm_btn"):
+                st.session_state.qcm_total += 1
+                if user_choice == qcm["correct_option"]:
+                    st.session_state.qcm_score += 1
+                    st.success(f"✅ ممتاز يا بطل! الإجابة صحيحة. الاختيار الصحيح هو **{qcm['correct_option']}**.")
+                else:
+                    st.error(f"❌ خطأ! الإجابة الصحيحة هي **{qcm['correct_option']}**.")
+
+                st.markdown(f"**Explication de Sensai :**\n{qcm['explanation']}")
+
+    else:
+        # الوضع العادي (المحادثة الطبية العادية مع Sensai)
+        if not st.session_state.pdf_text:
+            st.info("💡 Sensai جاهز للأسئلة الطبية، مراجعة الأسئلة، أو تحليل ملفات PDF للدروس والتحاليل.")
+
+        sensai_container = st.container(height=420)
         with sensai_container:
-            with st.chat_message("user"):
-                st.markdown(f'<div dir="auto">{sensai_input}</div>', unsafe_allow_html=True)
-            with st.chat_message("assistant"):
-                with st.spinner("Sensai راه يحلل في المعطيات الطبية..."):
-                    answer = send_message_with_rotation("sensai", sensai_input)
-                    save_message_to_db("sensai", "assistant", answer)
-                    st.markdown(f'<div dir="auto">{answer}</div>', unsafe_allow_html=True)
+            db_sensai_msgs = load_messages_from_db("sensai")
+            for msg in db_sensai_msgs:
+                with st.chat_message(msg["role"]):
+                    st.markdown(f'<div dir="auto">{msg["content"]}</div>', unsafe_allow_html=True)
 
-    db_sensai_msgs_export = load_messages_from_db("sensai")
-    sensai_answers = "\n\n-------------------------\n\n".join([
-        f"Sensai:\n{msg['content']}"
-        for msg in db_sensai_msgs_export
-        if msg["role"] == "assistant"
-    ])
-    if sensai_answers:
-        st.download_button(
-            label="📥 Export Medical Notes (TXT)",
-            data=sensai_answers,
-            file_name="sensai_medical_notes.txt",
-            mime="text/plain",
-            key="download_sensai_btn",
-        )
+        if sensai_input := st.chat_input(
+            "سقسي سينساي على الأعراض، التحاليل الطبية ولا الوثائق المرفوقة...",
+            key="sensai_input_key",
+        ):
+            save_message_to_db("sensai", "user", sensai_input)
+            with sensai_container:
+                with st.chat_message("user"):
+                    st.markdown(f'<div dir="auto">{sensai_input}</div>', unsafe_allow_html=True)
+                with st.chat_message("assistant"):
+                    with st.spinner("Sensai راه يحلل في المعطيات الطبية..."):
+                        answer = send_message_with_rotation("sensai", sensai_input)
+                        save_message_to_db("sensai", "assistant", answer)
+                        st.markdown(f'<div dir="auto">{answer}</div>', unsafe_allow_html=True)
+
+        db_sensai_msgs_export = load_messages_from_db("sensai")
+        sensai_answers = "\n\n-------------------------\n\n".join([
+            f"Sensai:\n{msg['content']}"
+            for msg in db_sensai_msgs_export
+            if msg["role"] == "assistant"
+        ])
+        if sensai_answers:
+            st.download_button(
+                label="📥 Export Medical Notes (TXT)",
+                data=sensai_answers,
+                file_name="sensai_medical_notes.txt",
+                mime="text/plain",
+                key="download_sensai_btn",
+            )
 
 # ------------------------------------------------------------------------------
 # VIEW 3: POCOLOCO
