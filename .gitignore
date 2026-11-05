@@ -1,0 +1,5 @@
+.env
+ai_project/
+__pycache__/
+*.pyc
+pekka_database.db
